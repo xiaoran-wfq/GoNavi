@@ -1343,7 +1343,7 @@ ${selectedTrigger.statement}`;
       dbType === 'postgres' || dbType === 'kingbase' || dbType === 'highgo' || dbType === 'vastbase';
   const isOracleLikeDialect = (dbType: string): boolean => dbType === 'oracle' || dbType === 'dm';
   const isSqlServerDialect = (dbType: string): boolean => dbType === 'sqlserver';
-  const isMysqlLikeDialect = (dbType: string): boolean => dbType === 'mysql' || dbType === 'mariadb' || dbType === 'diros' || dbType === 'sphinx' || dbType === 'clickhouse';
+  const isMysqlLikeDialect = (dbType: string): boolean => dbType === 'mysql' || dbType === 'mariadb' || dbType === 'diros' || dbType === 'clickhouse';
   const isNonRelationalDialect = (dbType: string): boolean => dbType === 'redis' || dbType === 'mongodb';
   const lacksAlterForeignKeySupport = (dbType: string): boolean => dbType === 'sqlite' || dbType === 'duckdb' || dbType === 'tdengine';
   const lacksTableCommentSupport = (dbType: string): boolean => dbType === 'sqlite';
@@ -1351,7 +1351,7 @@ ${selectedTrigger.statement}`;
   const quoteIdentifierPartByDialect = (part: string, dbType: string): string => {
       const ident = stripIdentifierQuotes(part);
       if (!ident) return '';
-      if (isMysqlLikeDialect(dbType) || dbType === 'tdengine') {
+      if (isMysqlLikeDialect(dbType) || dbType === 'tdengine' || dbType === 'sphinx') {
           return `\`${escapeBacktickIdentifier(ident)}\``;
       }
       if (isSqlServerDialect(dbType)) {
