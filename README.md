@@ -216,7 +216,7 @@ External contributors should open pull requests directly against `main`.
 
 - [linux.do](https://linux.do/)
 - [AIBook](https://aibook.ren/)
-- 
+
 ## License
 
 Licensed under [Apache-2.0](LICENSE).

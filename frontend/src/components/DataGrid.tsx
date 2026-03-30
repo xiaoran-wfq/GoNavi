@@ -32,6 +32,7 @@ import 'react-resizable/css/styles.css';
 import { buildOrderBySQL, buildPaginatedSelectSQL, buildWhereSQL, escapeLiteral, hasExplicitSort, quoteIdentPart, quoteQualifiedIdent, withSortBufferTuningSQL, type FilterCondition } from '../utils/sql';
 import { isMacLikePlatform, normalizeOpacityForPlatform, resolveAppearanceValues } from '../utils/appearance';
 import { getDataSourceCapabilities } from '../utils/dataSourceCapabilities';
+import { resolvePaginationPageText, resolvePaginationSummaryText, resolvePaginationTotalForControl } from '../utils/dataGridPagination';
 import { calculateTableBodyBottomPadding, calculateVirtualTableScrollX } from './dataGridLayout';
 
 // --- Error Boundary ---
@@ -818,6 +819,7 @@ interface DataGridProps {
         total: number,
         totalKnown?: boolean,
         totalApprox?: boolean,
+        approximateTotal?: number,
         totalCountLoading?: boolean,
         totalCountCancelled?: boolean,
     };
@@ -995,7 +997,9 @@ const DataGrid: React.FC<DataGridProps> = ({
   const selectionColumnWidth = 46;
   const currentConnConfig = connections.find(c => c.id === connectionId)?.config;
   const dataSourceCaps = getDataSourceCapabilities(currentConnConfig);
-  const isDuckDBConnection = dataSourceCaps.type === 'duckdb';
+  const prefersManualTotalCount = dataSourceCaps.preferManualTotalCount;
+  const supportsApproximateTableCount = dataSourceCaps.supportsApproximateTableCount;
+  const supportsApproximateTotalPages = dataSourceCaps.supportsApproximateTotalPages;
   const supportsCopyInsert = dataSourceCaps.supportsCopyInsert;
   const supportsSqlQueryExport = dataSourceCaps.supportsSqlQueryExport;
   const isQueryResultExport = exportScope === 'queryResult';
@@ -4483,37 +4487,20 @@ const DataGrid: React.FC<DataGridProps> = ({
 
   const paginationSummaryText = useMemo(() => {
       if (!pagination) return '';
-      const total = Number.isFinite(pagination.total) ? pagination.total : 0;
-      const rangeStart = Math.max(0, (pagination.current - 1) * pagination.pageSize + (total > 0 ? 1 : 0));
-      const hasValidRange = total > 0 && rangeStart > 0;
-      const rangeEnd = hasValidRange ? Math.min(total, rangeStart + pagination.pageSize - 1) : 0;
-      const currentCount = hasValidRange ? Math.max(0, rangeEnd - rangeStart + 1) : 0;
-
-      if (pagination.totalKnown === false) {
-          if (isDuckDBConnection) {
-              if (pagination.totalCountLoading) return `当前 ${currentCount} 条 / 正在统计精确总数…`;
-              if (pagination.totalApprox && Number.isFinite(total) && total > 0) return `当前 ${currentCount} 条 / 约 ${total} 条`;
-              if (pagination.totalCountCancelled) return `当前 ${currentCount} 条 / 已取消统计`;
-              return `当前 ${currentCount} 条 / 总数未统计`;
-          }
-          return `当前 ${currentCount} 条 / 正在统计总数…`;
-      }
-
-      if (isDuckDBConnection && (!Number.isFinite(total) || total <= 0)) {
-          return '当前 0 条 / 共 0 条';
-      }
-
-      return `当前 ${currentCount} 条 / 共 ${total} 条`;
-  }, [pagination, isDuckDBConnection]);
+      return resolvePaginationSummaryText({
+          pagination,
+          prefersManualTotalCount,
+          supportsApproximateTableCount,
+      });
+  }, [pagination, prefersManualTotalCount, supportsApproximateTableCount]);
 
   const paginationPageText = useMemo(() => {
       if (!pagination) return '';
-      const total = Number.isFinite(pagination.total) ? pagination.total : 0;
-      const canShowTotalPages = pagination.totalKnown !== false || (isDuckDBConnection && pagination.totalApprox && total > 0);
-      if (!canShowTotalPages || total <= 0) return `第 ${pagination.current} 页`;
-      const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pagination.pageSize)));
-      return `第 ${pagination.current} / ${totalPages} 页`;
-  }, [pagination, isDuckDBConnection]);
+      return resolvePaginationPageText({
+          pagination,
+          supportsApproximateTotalPages,
+      });
+  }, [pagination, supportsApproximateTotalPages]);
 
   const handlePageSizeChange = useCallback((value: string) => {
       if (!pagination || !onPageChange) return;
@@ -4680,7 +4667,7 @@ const DataGrid: React.FC<DataGridProps> = ({
                </Tooltip>
            </>
 
-           {isDuckDBConnection && onRequestTotalCount && (
+           {prefersManualTotalCount && onRequestTotalCount && (
                <>
                    <div style={{ width: 1, background: toolbarDividerColor, height: 20, margin: '0 8px' }} />
                    <Tooltip title={pagination?.totalCountLoading ? '取消本次精确总数统计（不会影响当前浏览）' : '按当前筛选统计精确总数'}>
@@ -5539,7 +5526,10 @@ const DataGrid: React.FC<DataGridProps> = ({
                    <Pagination
                        current={pagination.current}
                        pageSize={pagination.pageSize}
-                       total={pagination.total}
+                       total={resolvePaginationTotalForControl({
+                           pagination,
+                           supportsApproximateTotalPages,
+                       })}
                        showSizeChanger={false}
                        onChange={onPageChange}
                        showTitle={false}

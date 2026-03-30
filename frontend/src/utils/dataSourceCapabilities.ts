@@ -64,6 +64,9 @@ const COPY_INSERT_TYPES = new Set([
 
 const QUERY_EDITOR_DISABLED_TYPES = new Set(['redis']);
 const FORCE_READ_ONLY_QUERY_TYPES = new Set(['tdengine', 'clickhouse']);
+const MANUAL_TOTAL_COUNT_TYPES = new Set(['duckdb', 'oracle']);
+const APPROXIMATE_TABLE_COUNT_TYPES = new Set(['duckdb', 'oracle']);
+const APPROXIMATE_TOTAL_PAGE_TYPES = new Set(['duckdb']);
 
 export type DataSourceCapabilities = {
   type: string;
@@ -71,6 +74,9 @@ export type DataSourceCapabilities = {
   supportsSqlQueryExport: boolean;
   supportsCopyInsert: boolean;
   forceReadOnlyQueryResult: boolean;
+  preferManualTotalCount: boolean;
+  supportsApproximateTableCount: boolean;
+  supportsApproximateTotalPages: boolean;
 };
 
 export const getDataSourceCapabilities = (config: ConnectionLike): DataSourceCapabilities => {
@@ -81,6 +87,8 @@ export const getDataSourceCapabilities = (config: ConnectionLike): DataSourceCap
     supportsSqlQueryExport: SQL_QUERY_EXPORT_TYPES.has(type),
     supportsCopyInsert: COPY_INSERT_TYPES.has(type),
     forceReadOnlyQueryResult: FORCE_READ_ONLY_QUERY_TYPES.has(type),
+    preferManualTotalCount: MANUAL_TOTAL_COUNT_TYPES.has(type),
+    supportsApproximateTableCount: APPROXIMATE_TABLE_COUNT_TYPES.has(type),
+    supportsApproximateTotalPages: APPROXIMATE_TOTAL_PAGE_TYPES.has(type),
   };
 };
-

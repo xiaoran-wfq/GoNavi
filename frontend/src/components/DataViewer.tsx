@@ -6,7 +6,9 @@ import { DBQuery, DBGetColumns } from '../../wailsjs/go/app/App';
 import DataGrid, { GONAVI_ROW_KEY } from './DataGrid';
 import { buildOrderBySQL, buildPaginatedSelectSQL, buildWhereSQL, hasExplicitSort, quoteIdentPart, quoteQualifiedIdent, withSortBufferTuningSQL, type FilterCondition } from '../utils/sql';
 import { buildMongoCountCommand, buildMongoFilter, buildMongoFindCommand, buildMongoSort } from '../utils/mongodb';
+import { buildOracleApproximateTotalSql, parseApproximateTableCountRow, resolveApproximateTableCountStrategy } from '../utils/approximateTableCount';
 import { getDataSourceCapabilities } from '../utils/dataSourceCapabilities';
+import { resolveDataViewerAutoFetchAction } from '../utils/dataViewerAutoFetch';
 
 type ViewerPaginationState = {
   current: number;
@@ -14,6 +16,7 @@ type ViewerPaginationState = {
   total: number;
   totalKnown: boolean;
   totalApprox: boolean;
+  approximateTotal?: number;
   totalCountLoading: boolean;
   totalCountCancelled: boolean;
 };
@@ -67,30 +70,6 @@ const parseTotalFromCountRow = (row: any): number | null => {
     if (parsed !== null) return parsed;
   }
 
-  return null;
-};
-
-const parseDuckDBApproxTotalRow = (row: any): number | null => {
-  if (!row || typeof row !== 'object') return null;
-  const entries = Object.entries(row as Record<string, unknown>);
-  if (entries.length === 0) return null;
-
-  const preferredKeys = ['approx_total', 'estimated_size', 'estimated_rows', 'row_count', 'count', 'total'];
-  for (const preferred of preferredKeys) {
-    for (const [key, raw] of entries) {
-      if (String(key || '').trim().toLowerCase() !== preferred) continue;
-      const parsed = toNonNegativeFiniteNumber(raw);
-      if (parsed !== null) return parsed;
-    }
-  }
-
-  for (const [key, raw] of entries) {
-    const normalized = String(key || '').trim().toLowerCase();
-    if (normalized.includes('estimate') || normalized.includes('row') || normalized.includes('count') || normalized.includes('total')) {
-      const parsed = toNonNegativeFiniteNumber(raw);
-      if (parsed !== null) return parsed;
-    }
-  }
   return null;
 };
 
@@ -201,7 +180,7 @@ const getViewerFilterSnapshot = (tabId: string): ViewerFilterSnapshot => {
   };
 };
 
-const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
+const DataViewer: React.FC<{ tab: TabData; isActive?: boolean }> = ({ tab, isActive = true }) => {
   const initialViewerSnapshot = useMemo(() => getViewerFilterSnapshot(tab.id), [tab.id]);
   const [data, setData] = useState<any[]>([]);
   const [columnNames, setColumnNames] = useState<string[]>([]);
@@ -214,6 +193,8 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
   const countKeyRef = useRef<string>('');
   const duckdbApproxSeqRef = useRef(0);
   const duckdbApproxKeyRef = useRef<string>('');
+  const oracleApproxSeqRef = useRef(0);
+  const oracleApproxKeyRef = useRef<string>('');
   const manualCountSeqRef = useRef(0);
   const manualCountKeyRef = useRef<string>('');
   const pkSeqRef = useRef(0);
@@ -228,6 +209,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
     left: initialViewerSnapshot.scrollLeft,
   });
   const initialLoadRef = useRef(false);
+  const skipNextAutoFetchRef = useRef(false);
 
   const [pagination, setPagination] = useState<ViewerPaginationState>({
       current: initialViewerSnapshot.currentPage,
@@ -246,8 +228,10 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
   const duckdbSafeSelectCacheRef = useRef<Record<string, string>>({});
   const currentConnConfig = connections.find(c => c.id === tab.connectionId)?.config;
   const currentConnCaps = getDataSourceCapabilities(currentConnConfig);
-  const currentConnType = currentConnCaps.type;
   const forceReadOnly = currentConnCaps.forceReadOnlyQueryResult;
+  const preferManualTotalCount = currentConnCaps.preferManualTotalCount;
+  const supportsApproximateTableCount = currentConnCaps.supportsApproximateTableCount;
+  const supportsApproximateTotalPages = currentConnCaps.supportsApproximateTotalPages;
   const persistViewerSnapshot = useCallback((tabId: string, overrides?: Partial<ViewerFilterSnapshot>) => {
     const normalizedTabId = String(tabId || '').trim();
     if (!normalizedTabId) return;
@@ -288,6 +272,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
     pkKeyRef.current = '';
     countKeyRef.current = '';
     duckdbApproxKeyRef.current = '';
+    oracleApproxKeyRef.current = '';
     manualCountKeyRef.current = '';
     duckdbSafeSelectCacheRef.current = {};
     latestConfigRef.current = null;
@@ -297,6 +282,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
     latestCountKeyRef.current = '';
     scrollSnapshotRef.current = { top: snapshot.scrollTop, left: snapshot.scrollLeft };
     initialLoadRef.current = false;
+    skipNextAutoFetchRef.current = true;
     setPagination(prev => ({
       ...prev,
       current: snapshot.currentPage,
@@ -304,6 +290,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
       total: 0,
       totalKnown: false,
       totalApprox: false,
+      approximateTotal: undefined,
       totalCountLoading: false,
       totalCountCancelled: false,
     }));
@@ -317,10 +304,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
     });
   }, [tab.id, persistViewerSnapshot]);
 
-  const handleDuckDBManualCount = useCallback(async () => {
-    if (latestDbTypeRef.current !== 'duckdb') {
-      return;
-    }
+  const handleManualTotalCount = useCallback(async () => {
     const config = latestConfigRef.current;
     const dbName = latestDbNameRef.current;
     const countSql = latestCountSqlRef.current;
@@ -341,7 +325,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
       const resCount = await DBQuery(countConfig as any, dbName, countSql);
       const countDuration = Date.now() - countStart;
       addSqlLog({
-        id: `log-${Date.now()}-duckdb-manual-count`,
+        id: `log-${Date.now()}-manual-count`,
         timestamp: Date.now(),
         sql: countSql,
         status: resCount?.success ? 'success' : 'error',
@@ -375,6 +359,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
         total,
         totalKnown: true,
         totalApprox: false,
+        approximateTotal: undefined,
         totalCountLoading: false,
         totalCountCancelled: false,
       }));
@@ -386,7 +371,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
     }
   }, [addSqlLog]);
 
-  const handleDuckDBCancelManualCount = useCallback(() => {
+  const handleCancelManualTotalCount = useCallback(() => {
     manualCountSeqRef.current++;
     setPagination(prev => ({ ...prev, totalCountLoading: false, totalCountCancelled: true }));
   }, []);
@@ -438,7 +423,15 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
     const totalRows = Number(pagination.total);
     const hasFiniteTotal = Number.isFinite(totalRows) && totalRows >= 0;
     const totalKnown = pagination.totalKnown && hasFiniteTotal;
-    const totalPages = hasFiniteTotal ? Math.max(1, Math.ceil(totalRows / size)) : 0;
+    const approximateTotalRows = Number(pagination.approximateTotal);
+    const hasApproximateTotalPages =
+      !totalKnown &&
+      supportsApproximateTotalPages &&
+      pagination.totalApprox &&
+      Number.isFinite(approximateTotalRows) &&
+      approximateTotalRows > 0;
+    const effectiveTotalRows = hasApproximateTotalPages ? approximateTotalRows : totalRows;
+    const totalPages = Number.isFinite(effectiveTotalRows) && effectiveTotalRows > 0 ? Math.max(1, Math.ceil(effectiveTotalRows / size)) : 0;
     const currentPage = totalPages > 0 ? Math.min(Math.max(1, page), totalPages) : Math.max(1, page);
     const offset = (currentPage - 1) * size;
     const isClickHouse = !isMongoDB && dbTypeLower === 'clickhouse';
@@ -632,6 +625,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
                         total: derivedTotal,
                         totalKnown: true,
                         totalApprox: false,
+                        approximateTotal: undefined,
                         totalCountLoading: false,
                         totalCountCancelled: false,
                     };
@@ -647,13 +641,20 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
                     }
                 }
                 const keepManualCounting = prev.totalCountLoading && manualCountKeyRef.current === countKey;
-                if (isDuckDB && prev.totalApprox && duckdbApproxKeyRef.current === countKey && Number.isFinite(prev.total) && prev.total >= minExpectedTotal) {
+                const hasApproximateTotalForCurrentKey =
+                  prev.totalApprox &&
+                  (duckdbApproxKeyRef.current === countKey || oracleApproxKeyRef.current === countKey) &&
+                  Number.isFinite(prev.approximateTotal) &&
+                  Number(prev.approximateTotal) >= minExpectedTotal;
+                if (hasApproximateTotalForCurrentKey) {
                     return {
                         ...prev,
                         current: currentPage,
                         pageSize: size,
+                        total: derivedTotal,
                         totalKnown: false,
                         totalApprox: true,
+                        approximateTotal: prev.approximateTotal,
                         totalCountLoading: keepManualCounting,
                         totalCountCancelled: false,
                     };
@@ -665,12 +666,13 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
                     total: derivedTotal,
                     totalKnown: false,
                     totalApprox: false,
+                    approximateTotal: undefined,
                     totalCountLoading: keepManualCounting,
                     totalCountCancelled: keepManualCounting ? false : prev.totalCountCancelled,
                 };
             });
 
-            const shouldRunAsyncCount = !derivedTotalKnown && !isDuckDB;
+            const shouldRunAsyncCount = !derivedTotalKnown && !preferManualTotalCount;
             if (shouldRunAsyncCount) {
                 if (countKeyRef.current !== countKey) {
                     countKeyRef.current = countKey;
@@ -695,7 +697,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
                             });
 
                             if (countSeqRef.current !== countSeq) return;
-                            if (countKeyRef.current !== countKey) return;
+                            if (latestCountKeyRef.current !== countKey) return;
 
                             if (!resCount.success) return;
                             if (!Array.isArray(resCount.data) || resCount.data.length === 0) return;
@@ -708,6 +710,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
                                 total,
                                 totalKnown: true,
                                 totalApprox: false,
+                                approximateTotal: undefined,
                                 totalCountLoading: false,
                                 totalCountCancelled: false,
                             }));
@@ -720,48 +723,88 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
                 }
             }
 
-            if (isDuckDB && !derivedTotalKnown && whereSQL.trim() === '' && duckdbApproxKeyRef.current !== countKey) {
-                duckdbApproxKeyRef.current = countKey;
-                const approxSeq = ++duckdbApproxSeqRef.current;
-                const { schemaName, pureTableName } = resolveDuckDBSchemaAndTable(dbName, tableName);
-                const escapedSchema = escapeSQLLiteral(schemaName);
-                const escapedTable = escapeSQLLiteral(pureTableName);
-                const approxConfig: any = { ...(config as any), timeout: 3 };
-                const approxSqlCandidates = [
-                    `SELECT estimated_size AS approx_total FROM duckdb_tables() WHERE schema_name='${escapedSchema}' AND table_name='${escapedTable}' LIMIT 1`,
-                    `SELECT estimated_size AS approx_total FROM duckdb_tables() WHERE table_name='${escapedTable}' ORDER BY CASE WHEN schema_name='${escapedSchema}' THEN 0 ELSE 1 END LIMIT 1`,
-                ];
+            if (!derivedTotalKnown) {
+                const approximateCountStrategy = supportsApproximateTableCount
+                  ? resolveApproximateTableCountStrategy({ dbType: dbTypeLower, whereSQL })
+                  : 'none';
 
-                (async () => {
-                    for (const approxSql of approxSqlCandidates) {
-                        try {
-                            const approxRes = await DBQuery(approxConfig as any, dbName, approxSql);
-                            if (duckdbApproxSeqRef.current !== approxSeq) return;
-                            if (countKeyRef.current !== countKey) return;
-                            if (!approxRes?.success || !Array.isArray(approxRes.data) || approxRes.data.length === 0) continue;
+                if (approximateCountStrategy === 'duckdb-estimated-size' && duckdbApproxKeyRef.current !== countKey) {
+                    duckdbApproxKeyRef.current = countKey;
+                    const approxSeq = ++duckdbApproxSeqRef.current;
+                    const { schemaName, pureTableName } = resolveDuckDBSchemaAndTable(dbName, tableName);
+                    const escapedSchema = escapeSQLLiteral(schemaName);
+                    const escapedTable = escapeSQLLiteral(pureTableName);
+                    const approxConfig: any = { ...(config as any), timeout: 3 };
+                    const approxSqlCandidates = [
+                        `SELECT estimated_size AS approx_total FROM duckdb_tables() WHERE schema_name='${escapedSchema}' AND table_name='${escapedTable}' LIMIT 1`,
+                        `SELECT estimated_size AS approx_total FROM duckdb_tables() WHERE table_name='${escapedTable}' ORDER BY CASE WHEN schema_name='${escapedSchema}' THEN 0 ELSE 1 END LIMIT 1`,
+                    ];
 
-                            const approxTotal = parseDuckDBApproxTotalRow(approxRes.data[0]);
-                            if (approxTotal === null) continue;
-                            if (!Number.isFinite(approxTotal) || approxTotal < minExpectedTotal) continue;
+                    (async () => {
+                        for (const approxSql of approxSqlCandidates) {
+                            try {
+                                const approxRes = await DBQuery(approxConfig as any, dbName, approxSql);
+                                if (duckdbApproxSeqRef.current !== approxSeq) return;
+                                if (latestCountKeyRef.current !== countKey) return;
+                                if (!approxRes?.success || !Array.isArray(approxRes.data) || approxRes.data.length === 0) continue;
+
+                                const approxTotal = parseApproximateTableCountRow(approxRes.data[0]);
+                                if (approxTotal === null) continue;
+                                if (!Number.isFinite(approxTotal) || approxTotal < minExpectedTotal) continue;
+
+                                setPagination(prev => {
+                                    if (latestCountKeyRef.current !== countKey) return prev;
+                                    if (prev.totalKnown) return prev;
+                                    return {
+                                        ...prev,
+                                        totalKnown: false,
+                                        totalApprox: true,
+                                        approximateTotal: approxTotal,
+                                        totalCountCancelled: false,
+                                    };
+                                });
+                                return;
+                            } catch {
+                                if (duckdbApproxSeqRef.current !== approxSeq) return;
+                                if (latestCountKeyRef.current !== countKey) return;
+                            }
+                        }
+                    })();
+                }
+
+                if (approximateCountStrategy === 'oracle-num-rows' && oracleApproxKeyRef.current !== countKey) {
+                    oracleApproxKeyRef.current = countKey;
+                    const approxSeq = ++oracleApproxSeqRef.current;
+                    const approxConfig: any = { ...(config as any), timeout: 3 };
+                    const approxSql = buildOracleApproximateTotalSql({ dbName, tableName });
+
+                    DBQuery(approxConfig as any, dbName, approxSql)
+                        .then((approxRes: any) => {
+                            if (oracleApproxSeqRef.current !== approxSeq) return;
+                            if (latestCountKeyRef.current !== countKey) return;
+                            if (!approxRes?.success || !Array.isArray(approxRes.data) || approxRes.data.length === 0) return;
+
+                            const approxTotal = parseApproximateTableCountRow(approxRes.data[0], ['approx_total', 'num_rows', 'estimated_rows', 'row_count', 'count', 'total']);
+                            if (approxTotal === null) return;
+                            if (!Number.isFinite(approxTotal) || approxTotal < minExpectedTotal) return;
 
                             setPagination(prev => {
-                                if (countKeyRef.current !== countKey) return prev;
+                                if (latestCountKeyRef.current !== countKey) return prev;
                                 if (prev.totalKnown) return prev;
                                 return {
                                     ...prev,
-                                    total: approxTotal,
                                     totalKnown: false,
                                     totalApprox: true,
+                                    approximateTotal: approxTotal,
                                     totalCountCancelled: false,
                                 };
                             });
-                            return;
-                        } catch {
-                            if (duckdbApproxSeqRef.current !== approxSeq) return;
-                            if (countKeyRef.current !== countKey) return;
-                        }
-                    }
-                })();
+                        })
+                        .catch(() => {
+                            if (oracleApproxSeqRef.current !== approxSeq) return;
+                            if (latestCountKeyRef.current !== countKey) return;
+                        });
+                }
             }
         } else {
             message.error(String(resData.message || '查询失败'));
@@ -780,7 +823,7 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
         });
     }
     if (fetchSeqRef.current === seq) setLoading(false);
-  }, [connections, tab, sortInfo, filterConditions, pkColumns, pagination.total, pagination.totalKnown]); 
+  }, [connections, tab, sortInfo, filterConditions, pkColumns, pagination.total, pagination.totalKnown, pagination.totalApprox, pagination.approximateTotal, preferManualTotalCount, supportsApproximateTableCount, supportsApproximateTotalPages]); 
   // 依赖 pkColumns：在无手动排序时可回退到主键稳定排序。
   // 主键信息只会在首次加载后更新一次，避免循环查询。
 
@@ -828,7 +871,15 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
   }, [tab.tableName, currentConnConfig?.type, filterConditions, sortInfo, pkColumns]);
 
   useEffect(() => {
-    if (!initialLoadRef.current) {
+    const action = resolveDataViewerAutoFetchAction({
+      skipNextAutoFetch: skipNextAutoFetchRef.current,
+      hasInitialLoad: initialLoadRef.current,
+    });
+    if (action === 'skip') {
+      skipNextAutoFetchRef.current = false;
+      return;
+    }
+    if (action === 'load-current-page') {
       initialLoadRef.current = true;
       fetchData(pagination.current, pagination.pageSize);
       return;
@@ -851,8 +902,8 @@ const DataViewer: React.FC<{ tab: TabData }> = ({ tab }) => {
           onSort={handleSort}
           onPageChange={handlePageChange}
           pagination={pagination}
-          onRequestTotalCount={currentConnType === 'duckdb' ? handleDuckDBManualCount : undefined}
-          onCancelTotalCount={currentConnType === 'duckdb' ? handleDuckDBCancelManualCount : undefined}
+          onRequestTotalCount={preferManualTotalCount ? handleManualTotalCount : undefined}
+          onCancelTotalCount={preferManualTotalCount ? handleCancelManualTotalCount : undefined}
           showFilter={showFilter}
           onToggleFilter={handleToggleFilter}
           onApplyFilter={handleApplyFilter}

@@ -183,7 +183,7 @@ let sharedAllColumnsData: {dbName: string, tableName: string, name: string, type
 let sharedVisibleDbs: string[] = [];
 let sharedColumnsCacheData: Record<string, any[]> = {};
 
-const QueryEditor: React.FC<{ tab: TabData }> = ({ tab }) => {
+const QueryEditor: React.FC<{ tab: TabData; isActive?: boolean }> = ({ tab, isActive = true }) => {
   const [query, setQuery] = useState(tab.query || 'SELECT * FROM ');
   
   type ResultSet = {

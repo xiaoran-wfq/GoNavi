@@ -12,6 +12,7 @@ import QueryEditor from './QueryEditor';
 import TableDesigner from './TableDesigner';
 import RedisViewer from './RedisViewer';
 import RedisCommandEditor from './RedisCommandEditor';
+import RedisMonitor from './RedisMonitor';
 import TriggerViewer from './TriggerViewer';
 import DefinitionViewer from './DefinitionViewer';
 import TableOverview from './TableOverview';
@@ -199,17 +200,20 @@ const TabManager: React.FC = () => {
   const items = useMemo(() => tabs.map((tab, index) => {
     const connectionName = connections.find((conn) => conn.id === tab.connectionId)?.name;
     const displayTitle = buildTabDisplayTitle(tab, connectionName);
+    const tabIsActive = tab.id === activeTabId;
     let content;
     if (tab.type === 'query') {
-      content = <QueryEditor tab={tab} />;
+      content = <QueryEditor tab={tab} isActive={tabIsActive} />;
     } else if (tab.type === 'table') {
-      content = <DataViewer tab={tab} />;
+      content = <DataViewer tab={tab} isActive={tabIsActive} />;
     } else if (tab.type === 'design') {
       content = <TableDesigner tab={tab} />;
     } else if (tab.type === 'redis-keys') {
       content = <RedisViewer connectionId={tab.connectionId} redisDB={tab.redisDB ?? 0} />;
     } else if (tab.type === 'redis-command') {
       content = <RedisCommandEditor connectionId={tab.connectionId} redisDB={tab.redisDB ?? 0} />;
+    } else if (tab.type === 'redis-monitor') {
+      content = <RedisMonitor connectionId={tab.connectionId} redisDB={tab.redisDB ?? 0} />;
     } else if (tab.type === 'trigger') {
       content = <TriggerViewer tab={tab} />;
     } else if (tab.type === 'view-def' || tab.type === 'routine-def') {
@@ -256,7 +260,7 @@ const TabManager: React.FC = () => {
       key: tab.id,
       children: content,
     };
-  }), [tabs, connections, closeOtherTabs, closeTabsToLeft, closeTabsToRight, closeAllTabs]);
+  }), [tabs, connections, activeTabId, closeOtherTabs, closeTabsToLeft, closeTabsToRight, closeAllTabs]);
 
   return (
     <>
