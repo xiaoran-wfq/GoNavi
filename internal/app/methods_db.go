@@ -392,7 +392,10 @@ func (a *App) MySQLShowCreateTable(config connection.ConnectionConfig, dbName st
 }
 
 func (a *App) DBQuery(config connection.ConnectionConfig, dbName string, query string) connection.QueryResult {
-	return a.DBQueryWithCancel(config, dbName, query, "")
+	if strings.Contains(query, ";") {
+                return a.DBQueryMulti(config, dbName, query, "")
+        }
+        return a.DBQueryWithCancel(config, dbName, query, "")
 }
 
 func (a *App) DBQueryWithCancel(config connection.ConnectionConfig, dbName string, query string, queryID string) connection.QueryResult {

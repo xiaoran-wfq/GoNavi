@@ -10,7 +10,9 @@ RUN npm run build
 FROM golang:1.24-alpine AS backend-builder
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /app
+ENV GOPROXY=https://mirrors.aliyun.com/goproxy/,direct
 COPY go.mod go.sum ./
+COPY third_party/ ./third_party/
 RUN go mod download
 COPY . .
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

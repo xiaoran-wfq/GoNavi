@@ -19,9 +19,21 @@
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
         
-        socket.onmessage = function(event) {
+        socket.onmessage = async function(event) {
             const data = JSON.parse(event.data);
             const { name, args } = data;
+            if (name === "WebRequestOpenFileDialog") {
+                const payload = args[0] || {};
+                const path = await window.runtime.OpenFileDialog(payload.options || {});
+                fetch("/api/dialog_response", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ requestID: payload.requestID, path: path || "" }) });
+                return;
+            }
+            if (name === "WebRequestSaveFileDialog") {
+                const payload = args[0] || {};
+                const path = await window.runtime.SaveFileDialog(payload.options || {});
+                fetch("/api/dialog_response", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ requestID: payload.requestID, path: path || "" }) });
+                return;
+            }
             if (eventListeners[name]) {
                 eventListeners[name].forEach(handler => handler(...(args || [])));
             }
@@ -131,6 +143,29 @@
         async MessageDialog(options) {
             alert(`${options.Title || 'Message'}\n\n${options.Message}`);
             return "ok";
+        },
+        EventsOnMultiple(name, handler, maxCallbacks) {
+            let counter = 0;
+            const wrappedHandler = (...args) => {
+                if (maxCallbacks > 0) {
+                    counter++;
+                    if (counter > maxCallbacks) {
+                        this.EventsOff(name, wrappedHandler);
+                        return;
+                    }
+                }
+                handler(...args);
+            };
+            if (!eventListeners[name]) eventListeners[name] = [];
+            eventListeners[name].push(wrappedHandler);
+            return () => this.EventsOff(name, wrappedHandler);
+        },
+        EventsOffAll(name) {
+            if (name) {
+                delete eventListeners[name];
+            } else {
+                for (const key in eventListeners) delete eventListeners[key];
+            }
         },
         EventsOn(name, handler) {
             if (!eventListeners[name]) eventListeners[name] = [];

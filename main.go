@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"io/fs"
 
 	aiservice "GoNavi-Wails/internal/ai/service"
 	"GoNavi-Wails/internal/app"
@@ -42,7 +43,11 @@ func main() {
 func runWebMode(application *app.App, aiService *aiservice.Service, port string) {
 	logger.Infof("Starting GoNavi in Web Mode on port %s", port)
 	
-	server := web.NewServer(http.FS(assets))
+	webAssets := assets
+        if sub, err := fs.Sub(assets, "frontend/dist"); err == nil {
+                webAssets = sub
+        }
+        server := web.NewServer(http.FS(webAssets))
 	web.GlobalRuntime = web.NewWebRuntime(server)
 
 	server.RegisterService("App", application)

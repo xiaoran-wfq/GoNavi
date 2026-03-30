@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+        "time"
+        "github.com/google/uuid"
 	"net/http"
 	"reflect"
 	"sync"
@@ -36,6 +38,8 @@ type Server struct {
 	clientsMu  sync.Mutex
 	upgrader   websocket.Upgrader
 	assetsFS   http.FileSystem
+        dialogWaiters   map[string]chan string
+        dialogWaitersMu sync.Mutex
 }
 
 func NewServer(assetsFS http.FileSystem) *Server {
@@ -48,6 +52,7 @@ func NewServer(assetsFS http.FileSystem) *Server {
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 		assetsFS: assetsFS,
+                dialogWaiters: make(map[string]chan string),
 	}
 	return s
 }
@@ -60,6 +65,7 @@ func (s *Server) Start(addr string) error {
 	s.echo.POST("/api/rpc", s.handleRPC)
 	s.echo.GET("/ws", s.handleWS)
 	s.registerUploadRoutes()
+        s.echo.POST("/api/dialog_response", s.handleDialogResponse)
 
 	// 静态资源托管
 	if s.assetsFS != nil {
@@ -195,8 +201,30 @@ func (w *WebRuntime) MessageDialog(ctx context.Context, dialogOptions MessageDia
 }
 
 func (w *WebRuntime) OpenFileDialog(ctx context.Context, dialogOptions OpenDialogOptions) (string, error) {
-	// Web 端限制，这里可以返回一个预设的路径，或者后续实现文件上传
-	return "", fmt.Errorf("file dialog not supported in web mode")
+        requestID := uuid.New().String()
+        ch := make(chan string, 1)
+
+        w.server.dialogWaitersMu.Lock()
+        w.server.dialogWaiters[requestID] = ch
+        w.server.dialogWaitersMu.Unlock()
+
+        w.server.BroadcastEvent("WebRequestOpenFileDialog", map[string]interface{}{
+                "requestID": requestID,
+                "options":   dialogOptions,
+        })
+
+        select {
+        case path := <-ch:
+                if path == "" {
+                        return "", fmt.Errorf("user canceled")
+                }
+                return path, nil
+        case <-time.After(5 * time.Minute):
+                w.server.dialogWaitersMu.Lock()
+                delete(w.server.dialogWaiters, requestID)
+                w.server.dialogWaitersMu.Unlock()
+                return "", fmt.Errorf("dialog timeout")
+        }
 }
 
 func (w *WebRuntime) OpenDirectoryDialog(ctx context.Context, dialogOptions OpenDialogOptions) (string, error) {
@@ -204,9 +232,54 @@ func (w *WebRuntime) OpenDirectoryDialog(ctx context.Context, dialogOptions Open
 }
 
 func (w *WebRuntime) SaveFileDialog(ctx context.Context, dialogOptions SaveDialogOptions) (string, error) {
-	return "", fmt.Errorf("save dialog not supported in web mode")
+        requestID := uuid.New().String()
+        ch := make(chan string, 1)
+
+        w.server.dialogWaitersMu.Lock()
+        w.server.dialogWaiters[requestID] = ch
+        w.server.dialogWaitersMu.Unlock()
+
+        w.server.BroadcastEvent("WebRequestSaveFileDialog", map[string]interface{}{
+                "requestID": requestID,
+                "options":   dialogOptions,
+        })
+
+        select {
+        case path := <-ch:
+                if path == "" {
+                        return "", fmt.Errorf("user canceled")
+                }
+                return path, nil
+        case <-time.After(5 * time.Minute):
+                w.server.dialogWaitersMu.Lock()
+                delete(w.server.dialogWaiters, requestID)
+                w.server.dialogWaitersMu.Unlock()
+                return "", fmt.Errorf("dialog timeout")
+        }
 }
 
 func (w *WebRuntime) Quit(ctx context.Context) {
 	// Web 服务端不退出
+}
+
+type DialogResponseRequest struct {
+        RequestID string `json:"requestID"`
+        Path      string `json:"path"`
+}
+
+func (s *Server) handleDialogResponse(c echo.Context) error {
+        var req DialogResponseRequest
+        if err := c.Bind(&req); err != nil {
+                return c.JSON(http.StatusBadRequest, RPCResponse{Success: false, Message: "Invalid request"})
+        }
+        s.dialogWaitersMu.Lock()
+        ch, ok := s.dialogWaiters[req.RequestID]
+        if ok {
+                delete(s.dialogWaiters, req.RequestID)
+        }
+        s.dialogWaitersMu.Unlock()
+        if ok {
+                ch <- req.Path
+        }
+        return c.JSON(http.StatusOK, RPCResponse{Success: true})
 }

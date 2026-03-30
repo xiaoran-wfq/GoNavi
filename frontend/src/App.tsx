@@ -744,6 +744,7 @@ function App() {
 
   const isMacRuntime = runtimePlatform === 'darwin'
       || (runtimePlatform === '' && /mac/i.test(detectNavigatorPlatform()));
+  const isWebMode = runtimePlatform === "web";
   const isWindowsRuntime = runtimePlatform === 'windows'
       || (runtimePlatform === '' && isWindowsPlatform());
   const useNativeMacWindowControls = isMacRuntime && appearance.useNativeMacWindowControls === true;
@@ -1653,7 +1654,7 @@ function App() {
                   {/* Logo can be added here if available */}
                   GoNavi
               </div>
-              {useNativeMacWindowControls ? (
+              {isWebMode || useNativeMacWindowControls ? (
                   <div style={{ minWidth: Math.max(40, Math.round(48 * effectiveUiScale)) }} />
               ) : (
                   <div
