@@ -19,8 +19,7 @@ import (
 
 	"GoNavi-Wails/internal/connection"
 	"GoNavi-Wails/internal/logger"
-
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"GoNavi-Wails/internal/web"
 )
 
 const (
@@ -216,7 +215,7 @@ func (a *App) InstallUpdateAndRestart() connection.QueryResult {
 
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		wailsRuntime.Quit(a.ctx)
+		web.GlobalRuntime.Quit(a.ctx)
 		// 兜底退出，避免某些平台/窗口状态下 Quit 未真正结束进程，导致更新脚本一直等待。
 		time.Sleep(2 * time.Second)
 		os.Exit(0)
@@ -828,7 +827,7 @@ func (a *App) emitUpdateDownloadProgress(status string, downloaded, total int64,
 	if status == "done" && payload.Percent < 100 {
 		payload.Percent = 100
 	}
-	wailsRuntime.EventsEmit(a.ctx, updateDownloadProgressEvent, payload)
+	web.GlobalRuntime.EventsEmit(a.ctx, updateDownloadProgressEvent, payload)
 }
 
 func launchUpdateScript(staged *stagedUpdate) error {

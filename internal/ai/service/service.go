@@ -18,9 +18,9 @@ import (
 	"GoNavi-Wails/internal/ai/provider"
 	"GoNavi-Wails/internal/ai/safety"
 	"GoNavi-Wails/internal/logger"
+	"GoNavi-Wails/internal/web"
 
 	"github.com/google/uuid"
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Service AI 服务，作为 Wails Binding 暴露给前端
@@ -777,7 +777,7 @@ func (s *Service) AIChatStream(sessionID string, messages []ai.Message, tools []
 
 		p, err := s.getActiveProvider()
 		if err != nil {
-			wailsRuntime.EventsEmit(s.ctx, "ai:stream:"+sessionID, map[string]interface{}{
+			web.GlobalRuntime.EventsEmit(s.ctx, "ai:stream:"+sessionID, map[string]interface{}{
 				"error": err.Error(),
 				"done":  true,
 			})
@@ -785,7 +785,7 @@ func (s *Service) AIChatStream(sessionID string, messages []ai.Message, tools []
 		}
 
 		err = p.ChatStream(streamCtx, ai.ChatRequest{Messages: messages, Tools: tools}, func(chunk ai.StreamChunk) {
-			wailsRuntime.EventsEmit(s.ctx, "ai:stream:"+sessionID, map[string]interface{}{
+			web.GlobalRuntime.EventsEmit(s.ctx, "ai:stream:"+sessionID, map[string]interface{}{
 				"content":    chunk.Content,
 				"thinking":   chunk.Thinking,
 				"tool_calls": chunk.ToolCalls,
@@ -796,7 +796,7 @@ func (s *Service) AIChatStream(sessionID string, messages []ai.Message, tools []
 
 		// 当 context 被主动 cancel 的时候，不把这个视为向外抛的 error
 		if err != nil && err != context.Canceled {
-			wailsRuntime.EventsEmit(s.ctx, "ai:stream:"+sessionID, map[string]interface{}{
+			web.GlobalRuntime.EventsEmit(s.ctx, "ai:stream:"+sessionID, map[string]interface{}{
 				"error": err.Error(),
 				"done":  true,
 			})

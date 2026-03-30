@@ -24,8 +24,8 @@ import (
 	"GoNavi-Wails/internal/connection"
 	"GoNavi-Wails/internal/db"
 	"GoNavi-Wails/internal/logger"
+	"GoNavi-Wails/internal/web"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/mod/semver"
 )
 
@@ -344,7 +344,7 @@ func (a *App) SelectDriverDownloadDirectory(currentDir string) connection.QueryR
 		}
 	}
 
-	selection, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenDirectoryDialog(a.ctx, web.OpenDialogOptions{
 		Title:                "选择驱动下载目录",
 		DefaultDirectory:     defaultDir,
 		CanCreateDirectories: true,
@@ -384,7 +384,7 @@ func (a *App) SelectDriverPackageFile(currentPath string) connection.QueryResult
 		}
 	}
 
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenFileDialog(a.ctx, web.OpenDialogOptions{
 		Title:            "选择驱动包文件",
 		DefaultDirectory: defaultDir,
 	})
@@ -415,7 +415,7 @@ func (a *App) SelectDriverPackageDirectory(currentPath string) connection.QueryR
 		}
 	}
 
-	selection, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenDirectoryDialog(a.ctx, web.OpenDialogOptions{
 		Title:            "选择驱动包目录",
 		DefaultDirectory: defaultDir,
 	})
@@ -938,7 +938,7 @@ func (a *App) emitDriverDownloadProgress(driverType string, status string, downl
 	if payload.Status == "done" && payload.Percent < 100 {
 		payload.Percent = 100
 	}
-	runtime.EventsEmit(a.ctx, driverDownloadProgressEvent, payload)
+	web.GlobalRuntime.EventsEmit(a.ctx, driverDownloadProgressEvent, payload)
 }
 
 func probeDriverNetworkEndpoint(client *http.Client, item driverNetworkProbeItem) driverNetworkProbeItem {

@@ -21,8 +21,8 @@ import (
 	"GoNavi-Wails/internal/db"
 	"GoNavi-Wails/internal/logger"
 	"GoNavi-Wails/internal/utils"
+	"GoNavi-Wails/internal/web"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -30,9 +30,9 @@ const minExportQueryTimeout = 5 * time.Minute
 const minClickHouseExportQueryTimeout = 2 * time.Hour
 
 func (a *App) OpenSQLFile() connection.QueryResult {
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenFileDialog(a.ctx, web.OpenDialogOptions{
 		Title: "Select SQL File",
-		Filters: []runtime.FileFilter{
+		Filters: []web.FileFilter{
 			{
 				DisplayName: "SQL Files (*.sql)",
 				Pattern:     "*.sql",
@@ -137,7 +137,7 @@ func (a *App) ExecuteSQLFile(config connection.ConnectionConfig, dbName string, 
 				percent = 100
 			}
 		}
-		runtime.EventsEmit(a.ctx, "sqlfile:progress", map[string]interface{}{
+		web.GlobalRuntime.EventsEmit(a.ctx, "sqlfile:progress", map[string]interface{}{
 			"jobId":      jobID,
 			"status":     status,
 			"executed":   executed,
@@ -260,9 +260,9 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 }
 
 func (a *App) ImportConfigFile() connection.QueryResult {
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenFileDialog(a.ctx, web.OpenDialogOptions{
 		Title: "Select Config File",
-		Filters: []runtime.FileFilter{
+		Filters: []web.FileFilter{
 			{
 				DisplayName: "JSON Files (*.json)",
 				Pattern:     "*.json",
@@ -302,10 +302,10 @@ func (a *App) SelectSSHKeyFile(currentPath string) connection.QueryResult {
 		}
 	}
 
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenFileDialog(a.ctx, web.OpenDialogOptions{
 		Title:            "选择 SSH 私钥文件",
 		DefaultDirectory: defaultDir,
-		Filters: []runtime.FileFilter{
+		Filters: []web.FileFilter{
 			{
 				DisplayName: "私钥文件",
 				Pattern:     "*.pem;*.key;*.ppk;*id_rsa*",
@@ -345,7 +345,7 @@ func (a *App) SelectDatabaseFile(currentPath string, driverType string) connecti
 	}
 
 	normalizedType := strings.ToLower(strings.TrimSpace(driverType))
-	filters := []runtime.FileFilter{
+	filters := []web.FileFilter{
 		{
 			DisplayName: "数据库文件",
 			Pattern:     "*.db;*.sqlite;*.sqlite3;*.db3;*.duckdb;*.ddb",
@@ -359,7 +359,7 @@ func (a *App) SelectDatabaseFile(currentPath string, driverType string) connecti
 	switch normalizedType {
 	case "sqlite":
 		title = "选择 SQLite 数据文件"
-		filters = []runtime.FileFilter{
+		filters = []web.FileFilter{
 			{
 				DisplayName: "SQLite 文件",
 				Pattern:     "*.db;*.sqlite;*.sqlite3;*.db3",
@@ -371,7 +371,7 @@ func (a *App) SelectDatabaseFile(currentPath string, driverType string) connecti
 		}
 	case "duckdb":
 		title = "选择 DuckDB 数据文件"
-		filters = []runtime.FileFilter{
+		filters = []web.FileFilter{
 			{
 				DisplayName: "DuckDB 文件",
 				Pattern:     "*.duckdb;*.ddb;*.db",
@@ -383,7 +383,7 @@ func (a *App) SelectDatabaseFile(currentPath string, driverType string) connecti
 		}
 	}
 
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenFileDialog(a.ctx, web.OpenDialogOptions{
 		Title:            title,
 		DefaultDirectory: defaultDir,
 		Filters:          filters,
@@ -428,9 +428,9 @@ func (a *App) PreviewImportFile(filePath string) connection.QueryResult {
 }
 
 func (a *App) ImportData(config connection.ConnectionConfig, dbName, tableName string) connection.QueryResult {
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := web.GlobalRuntime.OpenFileDialog(a.ctx, web.OpenDialogOptions{
 		Title: fmt.Sprintf("Import into %s", tableName),
-		Filters: []runtime.FileFilter{
+		Filters: []web.FileFilter{
 			{
 				DisplayName: "Data Files",
 				Pattern:     "*.csv;*.json;*.xlsx;*.xls",
@@ -738,7 +738,7 @@ func (a *App) ImportDataWithProgress(config connection.ConnectionConfig, dbName,
 
 		// 每 10 行发送一次进度事件
 		if (idx+1)%10 == 0 || idx == totalRows-1 {
-			runtime.EventsEmit(a.ctx, "import:progress", map[string]interface{}{
+			web.GlobalRuntime.EventsEmit(a.ctx, "import:progress", map[string]interface{}{
 				"current": idx + 1,
 				"total":   totalRows,
 				"success": successCount,
@@ -778,7 +778,7 @@ func (a *App) ApplyChanges(config connection.ConnectionConfig, dbName, tableName
 }
 
 func (a *App) ExportTable(config connection.ConnectionConfig, dbName string, tableName string, format string) connection.QueryResult {
-	filename, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	filename, err := web.GlobalRuntime.SaveFileDialog(a.ctx, web.SaveDialogOptions{
 		Title:           fmt.Sprintf("Export %s", tableName),
 		DefaultFilename: fmt.Sprintf("%s.%s", tableName, format),
 	})
@@ -866,7 +866,7 @@ func (a *App) exportTablesSQL(config connection.ConnectionConfig, dbName string,
 		defaultFilename = fmt.Sprintf("%s_%s.sql", strings.TrimSpace(tableNames[0]), suffix)
 	}
 
-	filename, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	filename, err := web.GlobalRuntime.SaveFileDialog(a.ctx, web.SaveDialogOptions{
 		Title:           "Export Tables (SQL)",
 		DefaultFilename: defaultFilename,
 	})
@@ -930,7 +930,7 @@ func (a *App) ExportDatabaseSQL(config connection.ConnectionConfig, dbName strin
 		suffix = "backup"
 	}
 
-	filename, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	filename, err := web.GlobalRuntime.SaveFileDialog(a.ctx, web.SaveDialogOptions{
 		Title:           fmt.Sprintf("Export %s (SQL)", safeDbName),
 		DefaultFilename: fmt.Sprintf("%s_%s.sql", safeDbName, suffix),
 	})
@@ -1749,7 +1749,7 @@ func (a *App) ExportData(data []map[string]interface{}, columns []string, defaul
 		defaultName = "export"
 	}
 	logger.Infof("ExportData 开始：rows=%d cols=%d format=%s defaultName=%s", len(data), len(columns), strings.ToLower(strings.TrimSpace(format)), strings.TrimSpace(defaultName))
-	filename, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	filename, err := web.GlobalRuntime.SaveFileDialog(a.ctx, web.SaveDialogOptions{
 		Title:           "Export Data",
 		DefaultFilename: fmt.Sprintf("%s.%s", defaultName, strings.ToLower(format)),
 	})
@@ -1786,7 +1786,7 @@ func (a *App) ExportQuery(config connection.ConnectionConfig, dbName string, que
 		defaultName = "export"
 	}
 
-	filename, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	filename, err := web.GlobalRuntime.SaveFileDialog(a.ctx, web.SaveDialogOptions{
 		Title:           "Export Query Result",
 		DefaultFilename: fmt.Sprintf("%s.%s", defaultName, strings.ToLower(format)),
 	})
