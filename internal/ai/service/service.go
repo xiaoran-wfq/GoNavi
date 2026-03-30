@@ -1023,6 +1023,9 @@ func (s *Service) AIDeleteSession(sessionID string) error {
 // --- 工具函数 ---
 
 func resolveConfigDir() string {
+	if os.Getenv("GONAVI_WEB") == "true" {
+		return "/app/data/ai"
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		homeDir = "."

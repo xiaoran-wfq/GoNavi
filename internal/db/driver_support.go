@@ -110,6 +110,9 @@ func IsBuiltinDriver(driverType string) bool {
 }
 
 func defaultExternalDriverDownloadDirectory() string {
+	if os.Getenv("GONAVI_WEB") == "true" {
+		return "/app/data/drivers"
+	}
 	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 		return filepath.Join(home, ".gonavi", "drivers")
 	}

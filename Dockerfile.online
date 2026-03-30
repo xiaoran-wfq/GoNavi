@@ -31,6 +31,7 @@ COPY --from=backend-builder /app/gonavi .
 # In online mode, optional drivers are downloaded at runtime into /app/data/drivers
 VOLUME /app/data
 ENV GONAVI_WEB=true
+ENV GONAVI_LOG_DIR=/app/data/logs
 EXPOSE 8080
 
 ENTRYPOINT ["./gonavi"]
